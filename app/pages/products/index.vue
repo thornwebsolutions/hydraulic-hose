@@ -16,45 +16,40 @@ const categories = [
   { id: 'accessories', name: 'Accessories' },
 ]
 
-// Placeholder products - will be fetched from Shopify later
-const products = ref([
-  {
-    id: '1',
-    name: 'SAE 100R2AT Hydraulic Hose',
-    description: 'Two-wire braided hose for high-pressure applications',
-    price: 12.99,
-    priceUnit: 'per foot',
-    image: null,
-    category: 'hydraulic-hoses',
-  },
-  {
-    id: '2',
-    name: 'JIC Female Swivel Fitting',
-    description: '37-degree flare fitting, steel construction',
-    price: 8.50,
-    priceUnit: 'each',
-    image: null,
-    category: 'fittings',
-  },
-  {
-    id: '3',
-    name: 'ISO 16028 Quick Coupler',
-    description: 'Skid steer style flat-face quick disconnect',
-    price: 24.99,
-    priceUnit: 'each',
-    image: null,
-    category: 'quick-disconnects',
-  },
-  {
-    id: '4',
-    name: 'NPT to JIC Adapter',
-    description: 'Steel adapter, male NPT to female JIC',
-    price: 6.75,
-    priceUnit: 'each',
-    image: null,
-    category: 'adapters',
-  },
-])
+// Fetch products from Shopify
+const { isConfigured, getProducts } = useShopify()
+const loading = ref(true)
+const products = ref<Array<{
+  id: string
+  handle: string
+  name: string
+  description: string
+  price: number
+  priceUnit: string
+  image: string | null
+  category: string
+}>>([])
+
+onMounted(async () => {
+  if (isConfigured.value) {
+    try {
+      const { products: shopifyProducts } = await getProducts({ first: 50 })
+      products.value = shopifyProducts.map(p => ({
+        id: p.handle,
+        handle: p.handle,
+        name: p.title,
+        description: p.description || '',
+        price: parseFloat(p.priceRange.minVariantPrice.amount),
+        priceUnit: p.productType?.toLowerCase().includes('hose') ? 'per foot' : 'each',
+        image: p.featuredImage?.url || null,
+        category: p.productType?.toLowerCase().replace(/\s+/g, '-') || 'uncategorized',
+      }))
+    } catch (error) {
+      console.error('Failed to fetch products from Shopify:', error)
+    }
+  }
+  loading.value = false
+})
 
 const filteredProducts = computed(() => {
   if (selectedCategory.value === 'all') return products.value
@@ -127,7 +122,12 @@ const filteredProducts = computed(() => {
               </select>
             </div>
 
-            <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6">
+            <!-- Loading State -->
+            <div v-if="loading" class="col-span-full flex justify-center py-12">
+              <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
+            </div>
+
+            <div v-else class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6">
               <NuxtLink
                 v-for="product in filteredProducts"
                 :key="product.id"
@@ -135,7 +135,13 @@ const filteredProducts = computed(() => {
                 class="card group"
               >
                 <div class="aspect-square bg-neutral-100 relative overflow-hidden">
-                  <div class="absolute inset-0 flex items-center justify-center text-neutral-300">
+                  <img
+                    v-if="product.image"
+                    :src="product.image"
+                    :alt="product.name"
+                    class="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                  />
+                  <div v-else class="absolute inset-0 flex items-center justify-center text-neutral-300">
                     <svg class="w-16 h-16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
                     </svg>
@@ -157,7 +163,7 @@ const filteredProducts = computed(() => {
             </div>
 
             <!-- Empty State -->
-            <div v-if="filteredProducts.length === 0" class="text-center py-16">
+            <div v-if="!loading && filteredProducts.length === 0" class="text-center py-16">
               <p class="text-neutral-600 mb-4">No products found in this category.</p>
               <NuxtLink to="/products" class="link">View all products</NuxtLink>
             </div>

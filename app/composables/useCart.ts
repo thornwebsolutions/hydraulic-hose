@@ -205,7 +205,8 @@ export function useCart() {
 
   function goToCheckout() {
     if (checkoutUrl.value) {
-      window.location.href = checkoutUrl.value
+      // Use navigateTo with external:true for proper external redirect
+      navigateTo(checkoutUrl.value, { external: true })
     }
   }
 

@@ -1,20 +1,38 @@
 <script setup lang="ts">
-import { allProducts } from '~/composables/useProducts'
-import { useLocalCart } from '~/stores/localCart'
+import type { ShopifyProduct } from '~/types/shopify'
 
 const route = useRoute()
 const toast = useToast()
-const cart = useLocalCart()
+const { getProductByHandle } = useShopify()
+const { addToCart: addToShopifyCart, initCart, isLoading: cartLoading } = useCart()
 
-const productId = computed(() => route.params.id as string)
+const productHandle = computed(() => route.params.id as string)
 
-const product = computed(() => {
-  return allProducts.find(p => p.id === productId.value)
+// Fetch product from Shopify
+const loading = ref(true)
+const shopifyProduct = ref<ShopifyProduct | null>(null)
+
+// Get the first variant ID for add to cart
+const selectedVariantId = computed(() => {
+  if (!shopifyProduct.value) return null
+  return shopifyProduct.value.variants.edges[0]?.node.id || null
 })
 
-const relatedProducts = computed(() => {
-  if (!product.value) return []
-  return allProducts.filter(p => product.value?.relatedIds.includes(p.id))
+// Transformed product for template compatibility
+const product = computed(() => {
+  if (!shopifyProduct.value) return null
+  const p = shopifyProduct.value
+  return {
+    id: p.handle,
+    name: p.title,
+    description: p.description,
+    longDescription: p.descriptionHtml ? p.description : p.description,
+    price: parseFloat(p.priceRange.minVariantPrice.amount),
+    priceUnit: p.productType?.toLowerCase().includes('hose') ? 'per foot' : 'each',
+    image: p.featuredImage?.url || null,
+    variants: p.variants.edges.map(e => e.node),
+    specs: [], // Could be populated from metafields
+  }
 })
 
 // SEO
@@ -41,38 +59,56 @@ const totalPrice = computed(() => {
   return product.value.price * quantity.value
 })
 
-const addToCart = () => {
-  if (!product.value) return
+const addToCart = async () => {
+  if (!product.value || !selectedVariantId.value) return
 
-  cart.addItem(
-    {
-      id: product.value.id,
-      name: product.value.name,
-      price: product.value.price,
-      priceUnit: product.value.priceUnit,
-    },
-    isPerFoot.value ? 1 : quantity.value,
-    isPerFoot.value ? length.value : undefined
-  )
+  try {
+    await addToShopifyCart([{
+      merchandiseId: selectedVariantId.value,
+      quantity: isPerFoot.value ? 1 : quantity.value,
+      // Store length as an attribute for per-foot items
+      ...(isPerFoot.value && {
+        attributes: [{ key: 'Length (ft)', value: String(length.value) }]
+      })
+    }])
 
-  // Show toast notification
-  if (isPerFoot.value) {
-    toast.success(`Added ${length.value} ft of ${product.value.name} to cart`)
-  } else {
-    toast.success(`Added ${quantity.value} x ${product.value.name} to cart`)
+    // Show toast notification
+    if (isPerFoot.value) {
+      toast.success(`Added ${length.value} ft of ${product.value.name} to cart`)
+    } else {
+      toast.success(`Added ${quantity.value} x ${product.value.name} to cart`)
+    }
+  } catch (error) {
+    toast.error('Failed to add to cart')
+    console.error('Add to cart error:', error)
   }
 }
 
-// Initialize cart on mount
-onMounted(() => {
-  cart.initCart()
+// Fetch product on mount
+onMounted(async () => {
+  initCart()
+  try {
+    shopifyProduct.value = await getProductByHandle(productHandle.value)
+  } catch (error) {
+    console.error('Failed to fetch product:', error)
+  }
+  loading.value = false
 })
 </script>
 
 <template>
   <div>
+    <!-- Loading State -->
+    <template v-if="loading">
+      <section class="py-20">
+        <div class="container-custom flex justify-center">
+          <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600"></div>
+        </div>
+      </section>
+    </template>
+
     <!-- Product Found -->
-    <template v-if="product">
+    <template v-else-if="product">
       <!-- Breadcrumb -->
       <div class="bg-neutral-50 border-b border-neutral-200">
         <div class="container-custom py-4">
@@ -92,12 +128,20 @@ onMounted(() => {
           <div class="grid lg:grid-cols-2 gap-12">
             <!-- Product Image -->
             <div>
-              <div class="aspect-square bg-neutral-100 rounded-xl flex items-center justify-center">
-                <div class="text-center text-neutral-400">
-                  <svg class="w-24 h-24 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                  </svg>
-                  <p class="text-sm">Product Image</p>
+              <div class="aspect-square bg-neutral-100 rounded-xl overflow-hidden relative">
+                <img
+                  v-if="product.image"
+                  :src="product.image"
+                  :alt="product.name"
+                  class="absolute inset-0 w-full h-full object-cover"
+                />
+                <div v-else class="absolute inset-0 flex items-center justify-center text-neutral-400">
+                  <div class="text-center">
+                    <svg class="w-24 h-24 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                    </svg>
+                    <p class="text-sm">Product Image</p>
+                  </div>
                 </div>
               </div>
             </div>
@@ -203,10 +247,18 @@ onMounted(() => {
               <!-- Add to Cart Button -->
               <button
                 type="button"
-                class="btn-primary w-full mb-8"
+                class="btn-primary w-full mb-8 disabled:opacity-50 disabled:cursor-not-allowed"
+                :disabled="cartLoading"
                 @click="addToCart"
               >
-                Add to Cart - ${{ totalPrice.toFixed(2) }}
+                <span v-if="cartLoading" class="flex items-center justify-center gap-2">
+                  <svg class="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  Adding...
+                </span>
+                <span v-else>Add to Cart - ${{ totalPrice.toFixed(2) }}</span>
               </button>
 
               <!-- Long Description -->
@@ -237,41 +289,6 @@ onMounted(() => {
                 </div>
               </div>
             </div>
-          </div>
-        </div>
-      </section>
-
-      <!-- Related Products -->
-      <section v-if="relatedProducts.length" class="py-12 bg-neutral-50">
-        <div class="container-custom">
-          <h2 class="text-2xl font-bold mb-8">Related Products</h2>
-          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-            <NuxtLink
-              v-for="related in relatedProducts"
-              :key="related.id"
-              :to="`/products/${related.id}`"
-              class="card group"
-            >
-              <div class="aspect-square bg-neutral-100 relative overflow-hidden">
-                <div class="absolute inset-0 flex items-center justify-center text-neutral-300">
-                  <svg class="w-16 h-16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                  </svg>
-                </div>
-              </div>
-              <div class="p-4">
-                <h3 class="font-semibold mb-1 group-hover:text-primary-600 transition-colors">
-                  {{ related.name }}
-                </h3>
-                <p class="text-sm text-neutral-600 mb-2">
-                  {{ related.description }}
-                </p>
-                <p class="font-semibold text-primary-600">
-                  ${{ related.price.toFixed(2) }}
-                  <span class="text-sm font-normal text-neutral-500">{{ related.priceUnit }}</span>
-                </p>
-              </div>
-            </NuxtLink>
           </div>
         </div>
       </section>

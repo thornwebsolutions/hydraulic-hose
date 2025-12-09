@@ -1,44 +1,70 @@
 <script setup lang="ts">
-import { useLocalCart } from '~/stores/localCart'
-
 useSeoMeta({
   title: 'Shopping Cart - Hydraulic Hose Co.',
   description: 'Review your cart and proceed to checkout.',
 })
 
-const cart = useLocalCart()
+const {
+  cartLines,
+  totalQuantity,
+  subtotal,
+  total,
+  isLoading,
+  initCart,
+  updateCartLine,
+  removeFromCart,
+  goToCheckout,
+} = useCart()
+
 const toast = useToast()
 
 // Initialize cart on mount
 onMounted(() => {
-  cart.initCart()
+  initCart()
 })
 
-const updateQuantity = (itemId: string, newQuantity: number) => {
+const updateQuantity = async (lineId: string, newQuantity: number) => {
   if (newQuantity > 0) {
-    cart.updateQuantity(itemId, newQuantity)
+    try {
+      await updateCartLine(lineId, newQuantity)
+    } catch (error) {
+      toast.error('Failed to update quantity')
+    }
   }
 }
 
-const updateLength = (itemId: string, newLength: number) => {
-  if (newLength > 0) {
-    cart.updateLength(itemId, newLength)
+const removeItem = async (lineId: string) => {
+  try {
+    await removeFromCart(lineId)
+    toast.info('Item removed from cart')
+  } catch (error) {
+    toast.error('Failed to remove item')
   }
-}
-
-const removeItem = (itemId: string) => {
-  cart.removeItem(itemId)
-  toast.info('Item removed from cart')
-}
-
-const clearCart = () => {
-  cart.clearCart()
-  toast.info('Cart cleared')
 }
 
 const proceedToCheckout = () => {
-  // Will redirect to Shopify checkout when connected
-  toast.info('Checkout will be available once Shopify is connected')
+  goToCheckout()
+}
+
+// Helper to get length attribute from cart line
+const getLength = (line: any) => {
+  const lengthAttr = line.attributes?.find((a: any) => a.key === 'Length (ft)')
+  return lengthAttr ? lengthAttr.value : null
+}
+
+// Helper to get product image
+const getImage = (line: any) => {
+  return line.merchandise?.product?.featuredImage?.url || null
+}
+
+// Helper to get product title
+const getTitle = (line: any) => {
+  const productTitle = line.merchandise?.product?.title || 'Product'
+  const variantTitle = line.merchandise?.title
+  if (variantTitle && variantTitle !== 'Default Title') {
+    return `${productTitle} - ${variantTitle}`
+  }
+  return productTitle
 }
 </script>
 
@@ -51,16 +77,23 @@ const proceedToCheckout = () => {
       </div>
     </section>
 
+    <!-- Loading State -->
+    <section v-if="isLoading && cartLines.length === 0" class="py-20">
+      <div class="container-custom flex justify-center">
+        <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600"></div>
+      </div>
+    </section>
+
     <!-- Cart Content -->
-    <section class="py-12">
+    <section v-else class="py-12">
       <div class="container-custom">
-        <div v-if="cart.items.length > 0" class="flex flex-col lg:flex-row gap-8">
+        <div v-if="cartLines.length > 0" class="flex flex-col lg:flex-row gap-8">
           <!-- Cart Items -->
           <div class="flex-1">
             <div class="bg-white rounded-xl shadow-sm border border-neutral-200 overflow-hidden">
               <div
-                v-for="(item, index) in cart.items"
-                :key="item.id"
+                v-for="(line, index) in cartLines"
+                :key="line.id"
                 class="p-4 sm:p-6"
                 :class="{ 'border-t border-neutral-200': index > 0 }"
               >
@@ -68,23 +101,31 @@ const proceedToCheckout = () => {
                 <div class="flex flex-col sm:flex-row gap-4">
                   <!-- Top row on mobile: image + details -->
                   <div class="flex gap-4 flex-1">
-                    <!-- Product Image Placeholder -->
-                    <div class="w-16 h-16 sm:w-24 sm:h-24 bg-neutral-100 rounded-lg flex items-center justify-center flex-shrink-0">
-                      <svg class="w-6 h-6 sm:w-8 sm:h-8 text-neutral-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                      </svg>
+                    <!-- Product Image -->
+                    <div class="w-16 h-16 sm:w-24 sm:h-24 bg-neutral-100 rounded-lg overflow-hidden flex-shrink-0">
+                      <img
+                        v-if="getImage(line)"
+                        :src="getImage(line)"
+                        :alt="getTitle(line)"
+                        class="w-full h-full object-cover"
+                      />
+                      <div v-else class="w-full h-full flex items-center justify-center">
+                        <svg class="w-6 h-6 sm:w-8 sm:h-8 text-neutral-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                        </svg>
+                      </div>
                     </div>
 
                     <!-- Product Details -->
                     <div class="flex-1 min-w-0">
-                      <h3 class="font-semibold text-sm sm:text-base mb-1 line-clamp-2">{{ item.name }}</h3>
+                      <h3 class="font-semibold text-sm sm:text-base mb-1 line-clamp-2">
+                        {{ getTitle(line) }}
+                      </h3>
                       <div class="text-xs sm:text-sm text-neutral-600">
-                        <p v-if="item.priceUnit === 'per foot' && item.length">
-                          {{ item.length }} ft @ ${{ item.price.toFixed(2) }}/ft
+                        <p v-if="getLength(line)">
+                          Length: {{ getLength(line) }} ft
                         </p>
-                        <p v-else>
-                          ${{ item.price.toFixed(2) }} {{ item.priceUnit }}
-                        </p>
+                        <p>Qty: {{ line.quantity }}</p>
                       </div>
                     </div>
                   </div>
@@ -92,31 +133,20 @@ const proceedToCheckout = () => {
                   <!-- Bottom row on mobile: price + controls -->
                   <div class="flex items-center justify-between sm:justify-end gap-4 sm:text-right pt-2 sm:pt-0 border-t sm:border-t-0 border-neutral-100">
                     <!-- Price -->
-                    <p class="font-semibold text-base sm:text-lg">${{ item.totalPrice.toFixed(2) }}</p>
+                    <p class="font-semibold text-base sm:text-lg">
+                      ${{ parseFloat(line.cost.totalAmount.amount).toFixed(2) }}
+                    </p>
 
                     <!-- Controls -->
                     <div class="flex items-center gap-2">
-                      <!-- Per-foot items: length control -->
-                      <div v-if="item.priceUnit === 'per foot'" class="flex items-center gap-1 sm:gap-2">
-                        <label class="text-xs sm:text-sm text-neutral-600">Length:</label>
-                        <input
-                          type="number"
-                          :value="item.length"
-                          min="1"
-                          step="0.5"
-                          class="input py-1 px-2 w-16 sm:w-20 text-xs sm:text-sm"
-                          @change="updateLength(item.id, Number(($event.target as HTMLInputElement).value))"
-                        >
-                        <span class="text-xs sm:text-sm text-neutral-600">ft</span>
-                      </div>
-
-                      <!-- Per-item products: quantity control -->
-                      <div v-else class="flex items-center gap-1 sm:gap-2">
+                      <!-- Quantity control -->
+                      <div class="flex items-center gap-1 sm:gap-2">
                         <label class="text-xs sm:text-sm text-neutral-600">Qty:</label>
                         <select
-                          :value="item.quantity"
-                          class="input py-1 px-2 w-14 sm:w-16 text-xs sm:text-sm"
-                          @change="updateQuantity(item.id, Number(($event.target as HTMLSelectElement).value))"
+                          :value="line.quantity"
+                          :disabled="isLoading"
+                          class="input py-1 px-2 w-14 sm:w-16 text-xs sm:text-sm disabled:opacity-50"
+                          @change="updateQuantity(line.id, Number(($event.target as HTMLSelectElement).value))"
                         >
                           <option v-for="n in 10" :key="n" :value="n">{{ n }}</option>
                         </select>
@@ -125,8 +155,9 @@ const proceedToCheckout = () => {
                       <!-- Remove button -->
                       <button
                         type="button"
-                        class="text-red-600 hover:text-red-700 text-xs sm:text-sm font-medium ml-2"
-                        @click="removeItem(item.id)"
+                        class="text-red-600 hover:text-red-700 text-xs sm:text-sm font-medium ml-2 disabled:opacity-50"
+                        :disabled="isLoading"
+                        @click="removeItem(line.id)"
                       >
                         Remove
                       </button>
@@ -140,13 +171,6 @@ const proceedToCheckout = () => {
               <NuxtLink to="/products" class="link text-sm">
                 &larr; Continue Shopping
               </NuxtLink>
-              <button
-                type="button"
-                class="text-neutral-500 hover:text-neutral-700 text-sm"
-                @click="clearCart"
-              >
-                Clear Cart
-              </button>
             </div>
           </div>
 
@@ -157,8 +181,8 @@ const proceedToCheckout = () => {
 
               <div class="space-y-3 mb-6">
                 <div class="flex justify-between text-sm">
-                  <span class="text-neutral-600">Subtotal ({{ cart.itemCount }} items)</span>
-                  <span>${{ cart.subtotal.toFixed(2) }}</span>
+                  <span class="text-neutral-600">Subtotal ({{ totalQuantity }} items)</span>
+                  <span>${{ parseFloat(subtotal).toFixed(2) }}</span>
                 </div>
                 <div class="flex justify-between text-sm">
                   <span class="text-neutral-600">Shipping</span>
@@ -173,16 +197,24 @@ const proceedToCheckout = () => {
               <div class="border-t border-neutral-200 pt-4 mb-6">
                 <div class="flex justify-between font-semibold text-lg">
                   <span>Total</span>
-                  <span>${{ cart.subtotal.toFixed(2) }}</span>
+                  <span>${{ parseFloat(total).toFixed(2) }}</span>
                 </div>
               </div>
 
               <button
                 type="button"
-                class="btn-primary w-full"
+                class="btn-primary w-full disabled:opacity-50"
+                :disabled="isLoading"
                 @click="proceedToCheckout"
               >
-                Proceed to Checkout
+                <span v-if="isLoading" class="flex items-center justify-center gap-2">
+                  <svg class="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                  </svg>
+                  Loading...
+                </span>
+                <span v-else>Proceed to Checkout</span>
               </button>
 
               <p class="text-xs text-neutral-500 text-center mt-4">
